@@ -1,0 +1,113 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+packages:
+  - curl
+  - jq
+  - python3-oci-cli
+
+write_files:
+  - path: /usr/local/bin/run_reserved_ip_vnic.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -uo pipefail
+
+      MARKER="/var/lib/reserved-ip-vnic.done"
+      LOG="/var/log/reserved_ip_vnic.log"
+      SCRIPT_URL="https://raw.githubusercontent.com/cj667113/OCI_AUXILIARY_SCRIPTS/refs/heads/main/networking/create_reserved_ip_and_secondary_vnic/create_reserved_ip_and_secondary_vnic.sh"
+      SCRIPT_PATH="/tmp/create_reserved_ip_and_secondary_vnic.sh"
+
+      # REQUIRED
+      SUBNET_OCID="ocid1.subnet.oc1.iad.aaaaaaaaz5zt3mo3z2aaijjez75rvirgvg2qq3tffovm7iwzui4y7c5mmapq"
+      # OPTIONAL (leave empty to not use a pool)
+      RESERVED_PUBLIC_IP_POOL_OCID=""
+
+      [[ -f "$MARKER" ]] && exit 0
+
+      mkdir -p "$(dirname "$LOG")" "$(dirname "$MARKER")"
+      exec >>"$LOG" 2>&1
+      echo "[$(date -Iseconds)] begin"
+
+      RC=0
+      trap 'echo "[$(date -Iseconds)] end rc=$RC"; touch "$MARKER"' EXIT
+
+      export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      export OCI_CLI_AUTH=instance_principal
+
+      curl -fsSL "$SCRIPT_URL" -o "$SCRIPT_PATH"
+      chmod +x "$SCRIPT_PATH"
+
+      # Pass both args; your script treats the 2nd as optional
+      bash "$SCRIPT_PATH" "$SUBNET_OCID" "$RESERVED_PUBLIC_IP_POOL_OCID" || RC=$?
+      exit "$RC"
+
+  - path: /etc/systemd/system/reserved-ip-vnic.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Create Reserved IP and attach Secondary VNIC (one-time)
+      Wants=network-online.target
+      After=network-online.target cloud-init.service
+      ConditionPathExists=!/var/lib/reserved-ip-vnic.done
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/run_reserved_ip_vnic.sh
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /usr/local/bin/run_configure_networking.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -uo pipefail
+      [[ -f /var/lib/reserved-ip-vnic.done ]] || exit 0
+      LOG="/var/log/configure_networking.log"
+      SCRIPT_URL="https://raw.githubusercontent.com/cj667113/OCI_AUXILIARY_SCRIPTS/refs/heads/main/networking/create_reserved_ip_and_secondary_vnic/configure_networking.sh"
+      SCRIPT_PATH="/tmp/configure_networking.sh"
+      mkdir -p "$(dirname "$LOG")"
+      exec >>"$LOG" 2>&1
+      echo "[$(date -Iseconds)] run"
+      curl -fsSL "$SCRIPT_URL" -o "$SCRIPT_PATH"
+      chmod +x "$SCRIPT_PATH"
+      bash "$SCRIPT_PATH"
+
+  - path: /etc/systemd/system/configure-networking.service
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Configure networking after secondary VNIC is created (periodic)
+      Wants=network-online.target
+      After=network-online.target reserved-ip-vnic.service
+      ConditionPathExists=/var/lib/reserved-ip-vnic.done
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/run_configure_networking.sh
+
+  - path: /etc/systemd/system/configure-networking.timer
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Run configure-networking.service every minute
+
+      [Timer]
+      OnBootSec=1min
+      OnUnitActiveSec=60s
+      AccuracySec=10s
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+
+runcmd:
+  - [ systemctl, daemon-reload ]
+  - [ systemctl, enable, --now, reserved-ip-vnic.service ]
+  - [ systemctl, enable, --now, configure-networking.timer ]
