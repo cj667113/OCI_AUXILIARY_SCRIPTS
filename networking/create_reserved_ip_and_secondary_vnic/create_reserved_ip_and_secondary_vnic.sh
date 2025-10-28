@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: ./create_reserved_ip_and_secondary_vnic.sh <subnet_ocid>
+# Usage: ./create_reserved_ip_and_secondary_vnic.sh <subnet_ocid> <public_ip_pool_ocid>
 
 set -euo pipefail
 
