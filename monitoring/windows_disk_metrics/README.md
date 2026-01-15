@@ -4,7 +4,7 @@
 
 #All {resource.type = 'instance', resource.compartment.id = 'ocid1.compartment.oc1..xxxxxxxx'}
 
-# Create Dynamic Group Policy - Gives instances in group permissions to push to metrics to namespace
+#Create Dynamic Group Policy - Gives instances in group permissions to push to metrics to namespace
 
 Allow dynamic-group Default/Production-Compute to use metrics in tenancy where target.metrics.namespace = 'production'
 
